@@ -1,4 +1,4 @@
-package ra.http;
+package ra.http.client;
 
 import io.onemfive.data.Envelope;
 import io.onemfive.network.Request;

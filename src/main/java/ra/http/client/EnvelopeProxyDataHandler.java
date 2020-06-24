@@ -1,6 +1,7 @@
-package ra.http;
+package ra.http.client;
 
-import io.onemfive.data.*;
+import io.onemfive.data.DocumentMessage;
+import io.onemfive.data.Envelope;
 import io.onemfive.data.content.Content;
 import io.onemfive.util.DLC;
 import io.onemfive.util.JSONParser;
@@ -11,7 +12,6 @@ import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
 import javax.servlet.http.Part;
 import java.io.*;
 import java.net.MalformedURLException;
@@ -24,28 +24,28 @@ import java.util.logging.Logger;
 
 /**
  * Handles incoming requests by:
- *  - creating new Envelope from incoming deserialized JSON request
+ *  - creating new Envelope from incoming HTTP request
  *  - sending Envelope to the bus
  *  - blocking until a response is returned
- *  - serializing the Envelope into JSON
+ *  - deserializing the Envelope back into bytes
  *  - setting up Response letting it return
  *
  */
-public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfive.network.sensors.clearnet.AsynchronousEnvelopeHandler {
+public class EnvelopeProxyDataHandler extends DefaultHandler implements AsynchronousEnvelopeHandler {
 
-    private static Logger LOG = Logger.getLogger(io.onemfive.network.sensors.clearnet.EnvelopeJSONDataHandler.class.getName());
+    private static Logger LOG = Logger.getLogger(io.onemfive.network.sensors.clearnet.EnvelopeProxyDataHandler.class.getName());
 
-    private Map<Long,ClientHold> requests = new HashMap<>();
-    private String id;
+    protected HTTPClientSession session;
+    protected Map<Long,ClientHold> requests = new HashMap<>();
+
     private String serviceName;
     private String[] parameters;
-    protected io.onemfive.network.sensors.clearnet.ClearnetSession session;
-    private HttpSession activeSession;
 
-    public EnvelopeJSONDataHandler() {}
+    public EnvelopeProxyDataHandler() {
 
-    @Override
-    public void setClearnetSession(io.onemfive.network.sensors.clearnet.ClearnetSession clearnetSession) {
+    }
+
+    public void setClearnetSession(HTTPClientSession clearnetSession) {
         this.session = clearnetSession;
     }
 
@@ -81,32 +81,13 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
             baseRequest.setHandled(true);
             return;
         }
-        int verifyStatus = verifyRequest(target, request);
-        if(verifyStatus != 200) {
-            response.setStatus(verifyStatus);
-            baseRequest.setHandled(true);
-            return;
-        }
 
-        long now = System.currentTimeMillis();
-        if(!request.getSession().getId().equals(activeSession.getId())) {
-            activeSession = request.getSession();
-            request.getSession().setMaxInactiveInterval(io.onemfive.network.sensors.clearnet.ClearnetSession.SESSION_INACTIVITY_INTERVAL);
-            session.setSessionId(activeSession.getId());
-        } else if(session.getLastRequestTime() + now > io.onemfive.network.sensors.clearnet.ClearnetSession.SESSION_INACTIVITY_INTERVAL * 1000){
-            request.getSession().invalidate();
-            activeSession = request.getSession(true);
-            request.getSession().setMaxInactiveInterval(io.onemfive.network.sensors.clearnet.ClearnetSession.SESSION_INACTIVITY_INTERVAL);
-            session.setSessionId(activeSession.getId());
-        }
-
-        session.setLastRequestTime(now);
-
-        Envelope envelope = parseEnvelope(target, request, session.sessionId);
+        Envelope envelope = parseEnvelope(request);
         ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
         requests.put(envelope.getId(), clientHold);
-
-        route(envelope); // asynchronous call upon; returns upon reaching Message Channel's queue in Service Bus
+        io.onemfive.network.Request req = new io.onemfive.network.Request();
+        req.setEnvelope(envelope);
+        session.sendIn(req); // asynchronous call upon; returns upon reaching Message Channel's queue in Service Bus
 
         if(DLC.getErrorMessages(envelope).size() > 0) {
             // Just 500 for now
@@ -115,36 +96,26 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
             baseRequest.setHandled(true);
             requests.remove(envelope.getId());
         } else {
-            // Hold Thread until response or 30 seconds
+            // Hold Thread until response or 10 minutes
 //            LOG.info("Holding HTTP Request for up to 30 seconds waiting for internal asynch response...");
-            clientHold.hold(30 * 1000); // hold for 30 seconds or until interrupted
+            clientHold.hold(10 * 60 * 1000); // hold for 10 minutes or until interrupted
         }
     }
 
-    protected void route(Envelope e) {
-        io.onemfive.network.Request req = new io.onemfive.network.Request();
-        req.setEnvelope(e);
-        session.sendIn(req);
-    }
-
     public void reply(Envelope e) {
+        LOG.info("Reply received...");
         ClientHold hold = requests.get(e.getId());
+        if(hold==null) {
+            LOG.warning("Hold not found.");
+            return;
+        }
         HttpServletResponse response = hold.getResponse();
-        LOG.info("Updating session status from response...");
-        String sessionId = (String)e.getHeader(io.onemfive.network.sensors.clearnet.ClearnetSession.class.getName());
-        if(activeSession==null) {
-            // session expired before response received so kill
-            LOG.warning("Expired session before response received: sessionId="+sessionId);
-            respond("{httpErrorCode=401}", "application/json", response, 401);
-        } else {
-            LOG.info("Active session found");
-            DID eDID = e.getDID();
-            LOG.info("DID in header: "+eDID);
-            if(!session.getAuthenticated() && eDID.getAuthenticated()) {
-                LOG.info("Updating active session to authenticated.");
-                session.setAuthenticated(true);
-            }
-            respond(unpackEnvelopeContent(e), "application/json", response, 200);
+        String body = new String(unpackEnvelopeContent(e));
+        try {
+            response.getWriter().print(body);
+        } catch (IOException ex) {
+            LOG.warning(ex.getLocalizedMessage());
+            response.setStatus(500);
         }
         hold.baseRequest.setHandled(true);
         LOG.info("Waking sleeping request thread to return response to caller...");
@@ -152,30 +123,24 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
         LOG.info("Unwinded request call with response.");
     }
 
-    protected int verifyRequest(String target, HttpServletRequest request) {
-
-        return 200;
-    }
-
-    protected Envelope parseEnvelope(String target, HttpServletRequest request, String sessionId) {
-//        LOG.info("Parsing request into Envelope...");
-        String json = request.getParameter("env");
-        if(json==null) {
-            LOG.warning("No Envelope in env parameter.");
-            return null;
-        }
-        Envelope e = new Envelope();
-        e.fromJSON(json);
-
+    protected Envelope parseEnvelope(HttpServletRequest request) {
+        LOG.info("Parsing request into Envelope...");
+        Envelope e = Envelope.documentFactory();
         // Must set id in header for asynchronous support
-        e.setHeader(io.onemfive.network.sensors.clearnet.ClearnetSession.HANDLER_ID, id);
-        e.setHeader(io.onemfive.network.sensors.clearnet.ClearnetSession.SESSION_ID, sessionId);
-
-        // Set path
-        e.setCommandPath(target.startsWith("/")?target.substring(1):target); // strip leading slash if present
+        e.setHeader(HTTPClientSession.HANDLER_ID, session.sessionId);
+        String uri = request.getRequestURI();
+        LOG.info("URI:"+uri);
+        boolean http = uri.startsWith("http://");
+        boolean https = uri.startsWith("https://");
+        if(!http && !https) {
+            if(uri.contains(":443")) {
+                uri = "https://" + uri;
+            } else {
+                uri = "http://" + uri;
+            }
+        }
         try {
-            // This is required to ensure the SensorManager knows to return the reply to the ClearnetServerSensor (ends with .json)
-            URL url = new URL("http://127.0.0.1"+target+".json");
+            URL url = new URL(uri);
             e.setURL(url);
         } catch (MalformedURLException e1) {
             LOG.warning(e1.getLocalizedMessage());
@@ -300,10 +265,8 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
         return e;
     }
 
-    protected String unpackEnvelopeContent(Envelope e) {
-//        LOG.info("Unpacking Content Map to JSON");
-        String json = JSONParser.toString(((JSONSerializable)DLC.getContent(e)).toMap());
-        return json;
+    protected byte[] unpackEnvelopeContent(Envelope e) {
+        return (byte[])DLC.getContent(e);
     }
 
     public String getPostRequestFormData(HttpServletRequest request)  {
@@ -334,19 +297,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
         return formData.toString();
     }
 
-    protected void respond(String body, String contentType, HttpServletResponse response, int code) {
-//        LOG.info("Returning response...");
-        response.setContentType(contentType);
-        try {
-            response.getWriter().print(body);
-            response.setStatus(code);
-        } catch (IOException ex) {
-            LOG.warning(ex.getLocalizedMessage());
-            response.setStatus(500);
-        }
-    }
-
-    private class ClientHold {
+    protected class ClientHold {
         private Thread thread;
         private String target;
         private Request baseRequest;
@@ -354,7 +305,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
         private HttpServletResponse response;
         private Envelope envelope;
 
-        private ClientHold(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response, Envelope envelope) {
+        public ClientHold(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response, Envelope envelope) {
             this.target = target;
             this.baseRequest = baseRequest;
             this.request = request;
@@ -362,7 +313,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
             this.envelope = envelope;
         }
 
-        private void hold(long waitTimeMs) {
+        public void hold(long waitTimeMs) {
             thread = Thread.currentThread();
             try {
                 Thread.sleep(waitTimeMs);
@@ -371,27 +322,27 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements io.onemfi
             }
         }
 
-        private void wake() {
+        public void wake() {
             thread.interrupt();
         }
 
-        private String getTarget() {
+        public String getTarget() {
             return target;
         }
 
-        private Request getBaseRequest() {
+        public Request getBaseRequest() {
             return baseRequest;
         }
 
-        private HttpServletRequest getRequest() {
+        public HttpServletRequest getRequest() {
             return request;
         }
 
-        private HttpServletResponse getResponse() {
+        public HttpServletResponse getResponse() {
             return response;
         }
 
-        private Envelope getEnvelope() {
+        public Envelope getEnvelope() {
             return envelope;
         }
     }

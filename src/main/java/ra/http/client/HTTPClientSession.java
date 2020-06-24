@@ -1,4 +1,4 @@
-package ra.http;
+package ra.http.client;
 
 import io.onemfive.core.notification.NotificationService;
 import io.onemfive.core.notification.SubscriptionRequest;
@@ -37,8 +37,6 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.logging.Logger;
-
-import static io.onemfive.network.sensors.clearnet.ClearnetSensor.CLEARNET_SESSION_CONFIG;
 
 /**
  * TODO: Add Description

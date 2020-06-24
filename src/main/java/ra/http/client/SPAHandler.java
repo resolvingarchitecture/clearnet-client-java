@@ -1,4 +1,4 @@
-package ra.http;
+package ra.http.client;
 
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;

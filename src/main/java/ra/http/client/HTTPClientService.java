@@ -1,18 +1,23 @@
-package ra.http;
+package ra.http.client;
 
-import ra.common.Network;
+import ra.common.messaging.MessageProducer;
+import ra.common.network.NetworkSession;
+import ra.common.service.BaseService;
+import ra.common.service.ServiceStatusListener;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.logging.Logger;
 
 /**
  * Clearnet access acting as a Client and Server
  */
-public class HTTPClient extends BaseSensor {
+public class HTTPClientService extends BaseService {
 
-    private static final Logger LOG = Logger.getLogger(io.onemfive.network.sensors.clearnet.ClearnetSensor.class.getName());
+    private static final Logger LOG = Logger.getLogger(HTTPClientService.class.getName());
 
     /**
      * Configuration of Sessions in the form:
@@ -22,45 +27,20 @@ public class HTTPClient extends BaseSensor {
     public static final String CLEARNET_SESSION_CONFIG = "settings.network.clearnet.sessionConfig";
 
     private boolean isTest = false;
-    private boolean clientsEnabled = false;
-    private boolean serversEnabled = false;
 
-    public HTTPClient() {
-        super(Network.HTTPS);
+    private Map<String,NetworkSession> sessions = new HashMap<>();
+
+    public HTTPClientService() {
     }
 
-    public HTTPClient(Network network) {
-        super(network);
+    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener) {
+        super(producer, listener);
     }
 
-    public HTTPClient(SensorManager sensorManager) {
-        super(sensorManager, Network.HTTPS);
-    }
-
-    public HTTPClient(SensorManager sensorManager, Network network) {
-        super(sensorManager, network);
-    }
-
-    @Override
-    public String[] getOperationEndsWith() {
-        return new String[]{".html",".htm",".do",".json"};
-    }
-
-    @Override
-    public String[] getURLBeginsWith() {
-        return new String[]{"http","https"};
-    }
-
-    @Override
-    public String[] getURLEndsWith() {
-        return new String[]{".html",".htm",".do",".json"};
-    }
-
-    @Override
-    public SensorSession establishSession(String spec, Boolean autoConnect) {
+    public NetworkSession establishSession(String spec, Boolean autoConnect) {
         Properties props;
         if(sessions.get(spec)==null) {
-            SensorSession sensorSession = new HTTPClientSession(this);
+            NetworkSession sensorSession = new HTTPClientSession(this);
             props = new Properties();
             props.setProperty(CLEARNET_SESSION_CONFIG, spec);
             sensorSession.init(props);

@@ -12,7 +12,7 @@
 	<name>ra-http-client</name>
 	<url>https://resolvingarchitecture.io</url>
 	<description>Resolving Architecture - HTTP Client</description>
-	<inceptionYear>2020</inceptionYear>
+	<inceptionYear>2017</inceptionYear>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -107,7 +107,7 @@
 					<artifactId>maven-compiler-plugin</artifactId>
 					<version>3.8.0</version>
                     <configuration>
-                        <release>11</release>
+                        <release>8</release>
                     </configuration>
 				</plugin>
 			</plugins>
@@ -129,27 +129,27 @@
 <!--                    <mainClass>io.onemfive.OneMFivePlatform</mainClass>-->
 <!--                </configuration>-->
 <!--            </plugin>-->
-			<plugin>
-				<artifactId>maven-assembly-plugin</artifactId>
-				<executions>
-					<execution>
-						<phase>package</phase>
-						<goals>
-							<goal>single</goal>
-						</goals>
-					</execution>
-				</executions>
-				<configuration>
-					<archive>
-						<manifest>
-							<mainClass>ra.btc.Daemon</mainClass>
-						</manifest>
-					</archive>
-					<descriptorRefs>
-						<descriptorRef>jar-with-dependencies</descriptorRef>
-					</descriptorRefs>
-				</configuration>
-			</plugin>
+<!--			<plugin>-->
+<!--				<artifactId>maven-assembly-plugin</artifactId>-->
+<!--				<executions>-->
+<!--					<execution>-->
+<!--						<phase>package</phase>-->
+<!--						<goals>-->
+<!--							<goal>single</goal>-->
+<!--						</goals>-->
+<!--					</execution>-->
+<!--				</executions>-->
+<!--				<configuration>-->
+<!--					<archive>-->
+<!--						<manifest>-->
+<!--							<mainClass>ra.http.Daemon</mainClass>-->
+<!--						</manifest>-->
+<!--					</archive>-->
+<!--					<descriptorRefs>-->
+<!--						<descriptorRef>jar-with-dependencies</descriptorRef>-->
+<!--					</descriptorRefs>-->
+<!--				</configuration>-->
+<!--			</plugin>-->
 <!--			<plugin>-->
 <!--				<groupId>org.apache.maven.plugins</groupId>-->
 <!--				<artifactId>maven-project-info-reports-plugin</artifactId>-->

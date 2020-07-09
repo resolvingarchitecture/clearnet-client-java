@@ -49,7 +49,26 @@ public class HTTPClientServiceTest {
     }
 
     @Test
-    public void homePageTest() {
+    public void httpTest() {
+        Envelope envelope = Envelope.documentFactory();
+        try {
+            envelope.setURL(new URL("http://resolvingarchitecture.io"));
+        } catch (MalformedURLException e) {
+            LOG.severe(e.getLocalizedMessage());
+            Assert.fail();
+            return;
+        }
+        envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
+        envelope.setAction(Envelope.Action.GET);
+        Request request = new Request();
+        request.setEnvelope(envelope);
+        service.send(request);
+        String html = new String((byte[]) DLC.getContent(envelope));
+        Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
+    }
+
+    @Test
+    public void httpsTest() {
         Envelope envelope = Envelope.documentFactory();
         try {
             envelope.setURL(new URL("https://resolvingarchitecture.io"));
@@ -65,6 +84,5 @@ public class HTTPClientServiceTest {
         service.send(request);
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
-        producer.send(request.getEnvelope());
     }
 }

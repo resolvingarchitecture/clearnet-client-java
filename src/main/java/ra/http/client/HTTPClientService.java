@@ -276,7 +276,7 @@ public class HTTPClientService extends BaseService {
             LOG.info("Body was null.");
             DLC.addContent(null,e);
         }
-
+        producer.send(e);
         return true;
     }
 

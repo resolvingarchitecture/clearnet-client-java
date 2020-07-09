@@ -104,16 +104,18 @@ public class HTTPClientService extends BaseService {
     }
 
     public Boolean send(NetworkPacket packet) {
-        if(!connected) {
-            connect();
-        }
-
         Envelope e = packet.getEnvelope();
+        if(!connected && !connect(e)) {
+            return false;
+        }
+        Message m = e.getMessage();
         URL url = e.getURL();
         if (url != null) {
             LOG.info("URL=" + url.toString());
         } else {
             LOG.info("URL must not be null.");
+            m.addErrorMessage("URL must not be null.");
+            producer.send(e);
             return false;
         }
         Map<String, Object> h = e.getHeaders();
@@ -135,14 +137,16 @@ public class HTTPClientService extends BaseService {
         CacheControl cacheControl = null;
         if (e.getMultipart() != null) {
             // handle file upload
-            Multipart m = e.getMultipart();
-            hStr.put(Envelope.HEADER_CONTENT_TYPE, "multipart/form-data; boundary=" + m.getBoundary());
+            Multipart mp = e.getMultipart();
+            hStr.put(Envelope.HEADER_CONTENT_TYPE, "multipart/form-data; boundary=" + mp.getBoundary());
             try {
-                bodyBytes = ByteBuffer.wrap(m.finish().getBytes());
+                bodyBytes = ByteBuffer.wrap(mp.finish().getBytes());
             } catch (IOException e1) {
                 e1.printStackTrace();
                 // TODO: Provide error message
                 LOG.warning("IOException caught while building HTTP body with multipart: " + e1.getLocalizedMessage());
+                m.addErrorMessage("IOException caught while building HTTP body with multipart: " + e1.getLocalizedMessage());
+                producer.send(e);
                 return false;
             }
             cacheControl = new CacheControl.Builder().noCache().build();
@@ -150,7 +154,6 @@ public class HTTPClientService extends BaseService {
 
         Headers headers = Headers.of(hStr);
         if(packet.getSendContentOnly()) {
-            Message m = e.getMessage();
             if (m instanceof DocumentMessage) {
                 Object contentObj = DLC.getContent(e);
                 if (contentObj instanceof String) {
@@ -169,6 +172,7 @@ public class HTTPClientService extends BaseService {
             } else {
                 LOG.warning("Only DocumentMessages supported at this time.");
                 DLC.addErrorMessage("Only DocumentMessages supported at this time.", e);
+                producer.send(e);
                 return false;
             }
         } else {
@@ -195,16 +199,19 @@ public class HTTPClientService extends BaseService {
             case GET: {b = b.get();break;}
             default: {
                 LOG.warning("Envelope.action must be set to ADD, UPDATE, REMOVE, or VIEW");
+                m.addErrorMessage("Envelope.action must be set to ADD, UPDATE, REMOVE, or VIEW");
+                producer.send(e);
                 return false;
             }
         }
         Request req = b.build();
         if(req == null) {
             LOG.warning("okhttp3 builder didn't build request.");
+            m.addErrorMessage("okhttp3 builder didn't build request.");
+            producer.send(e);
             return false;
         }
         Response response = null;
-        Message m = e.getMessage();
         if(url.toString().startsWith("https:")) {
             LOG.info("Sending https request, host="+url.getHost());
 //            if(trustedHosts.contains(url.getHost())) {
@@ -215,11 +222,13 @@ public class HTTPClientService extends BaseService {
                     LOG.warning(response.toString()+" - code="+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(m);
+                    producer.send(e);
                     return false;
                 }
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
                 m.addErrorMessage(e1.getLocalizedMessage());
+                producer.send(e);
                 return false;
             }
 //            } else {
@@ -240,6 +249,8 @@ public class HTTPClientService extends BaseService {
             LOG.info("Sending http request, host="+url.getHost());
             if(httpClient == null) {
                 LOG.severe("httpClient was not set up.");
+                m.addErrorMessage("httpClient was not set up.");
+                producer.send(e);
                 return false;
             }
             try {
@@ -248,11 +259,13 @@ public class HTTPClientService extends BaseService {
                     LOG.warning("HTTP request not successful: "+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(m);
+                    producer.send(e);
                     return false;
                 }
             } catch (IOException e2) {
                 LOG.warning(e2.getLocalizedMessage());
                 m.addErrorMessage(e2.getLocalizedMessage());
+                producer.send(e);
                 return false;
             }
         }
@@ -276,8 +289,7 @@ public class HTTPClientService extends BaseService {
             LOG.info("Body was null.");
             DLC.addContent(null,e);
         }
-        producer.send(e);
-        return true;
+        return producer.send(e);
     }
 
     protected void handleFailure(Message m) {
@@ -290,40 +302,40 @@ public class HTTPClientService extends BaseService {
                         case "403": {
                             // Forbidden
                             LOG.info("Received HTTP 403 response: Forbidden. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED");
+                            m.addErrorMessage("BLOCKED-FORBIDDEN");
                             blocked = true;
                             break;
                         }
                         case "408": {
                             // Request Timeout
                             LOG.info("Received HTTP 408 response: Request Timeout. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED");
+                            m.addErrorMessage("BLOCKED-TIMEOUT");
                             blocked = true;
                             break;
                         }
                         case "410": {
                             // Gone
                             LOG.info("Received HTTP 410 response: Gone. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED");
+                            m.addErrorMessage("BLOCKED-GONE");
                             blocked = true;
                             break;
                         }
                         case "418": {
                             // I'm a teapot
-                            LOG.warning("Received HTTP 418 response: I'm a teapot. HTTP Sensor ignoring.");
+                            LOG.warning("Received HTTP 418 response: I'm a teapot. HTTP Server ignoring.");
                             break;
                         }
                         case "451": {
                             // Unavailable for legal reasons; your IP address might be denied access to the resource
                             LOG.info("Received HTTP 451 response: unavailable for legal reasons. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED");
+                            m.addErrorMessage("BLOCKED-LEGAL");
                             blocked = true;
                             break;
                         }
                         case "511": {
                             // Network Authentication Required
                             LOG.info("Received HTTP 511 response: network authentication required. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED");
+                            m.addErrorMessage("BLOCKED-AUTHN");
                             blocked = true;
                             break;
                         }
@@ -333,7 +345,8 @@ public class HTTPClientService extends BaseService {
         }
     }
 
-    public boolean connect() {
+    public boolean connect(Envelope env) {
+        Message m = env.getMessage();
         boolean trustAllCerts = "true".equals(config.get(RA_HTTP_CLIENT_TRUST_ALL));
         SSLContext trustAllSSLContext = null;
         try {
@@ -344,9 +357,13 @@ public class HTTPClientService extends BaseService {
             }
         } catch (NoSuchAlgorithmException e) {
             LOG.warning(e.getLocalizedMessage());
+            m.addErrorMessage(e.getLocalizedMessage());
+            producer.send(env);
             return false;
         } catch (KeyManagementException e) {
             LOG.warning(e.getLocalizedMessage());
+            m.addErrorMessage(e.getLocalizedMessage());
+            producer.send(env);
             return false;
         }
 
@@ -466,7 +483,9 @@ public class HTTPClientService extends BaseService {
             }
 
         } catch (Exception e) {
-            LOG.warning("Exception caught launching Clearnet Sensor clients: " + e.getLocalizedMessage());
+            LOG.warning("Exception caught launching HTTP Client Service: " + e.getLocalizedMessage());
+            m.addErrorMessage("Exception caught launching HTTP Client Service: " + e.getLocalizedMessage());
+            producer.send(env);
             return false;
         }
         connected = true;

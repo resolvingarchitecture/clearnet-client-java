@@ -511,6 +511,7 @@ public class HTTPClientService extends BaseService {
 
     @Override
     public boolean start(Properties p) {
+        super.start(p);
         LOG.info("Initializing...");
         updateStatus(ServiceStatus.INITIALIZING);
         try {
@@ -519,18 +520,7 @@ public class HTTPClientService extends BaseService {
             LOG.severe(e.getLocalizedMessage());
             return false;
         }
-        try {
-            File serviceDir = SystemSettings.getUserAppHomeDir(".ra", "http-client", true);
-            if (!serviceDir.exists() && !serviceDir.mkdir()) {
-                LOG.severe("Unable to create HTTP Client Service directory.");
-                return false;
-            } else {
-                config.put(RA_HTTP_CLIENT_DIR, serviceDir.getCanonicalPath());
-            }
-        } catch (IOException e) {
-            LOG.severe("IOException caught while building HTTP Client directory: \n" + e.getLocalizedMessage());
-            return false;
-        }
+        config.put(RA_HTTP_CLIENT_DIR, getServiceDirectory().getAbsolutePath());
         return true;
     }
 

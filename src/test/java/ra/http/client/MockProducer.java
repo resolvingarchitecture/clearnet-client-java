@@ -1,5 +1,6 @@
 package ra.http.client;
 
+import ra.common.Client;
 import ra.common.DLC;
 import ra.common.Envelope;
 import ra.common.messaging.MessageProducer;
@@ -12,6 +13,12 @@ public class MockProducer implements MessageProducer {
 
     @Override
     public boolean send(Envelope envelope) {
+        LOG.info(envelope.toJSON());
+        return true;
+    }
+
+    @Override
+    public boolean send(Envelope envelope, Client client) {
         LOG.info(envelope.toJSON());
         return true;
     }

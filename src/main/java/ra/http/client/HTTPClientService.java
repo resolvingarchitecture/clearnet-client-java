@@ -13,10 +13,8 @@ import ra.common.service.BaseService;
 import ra.common.service.ServiceStatus;
 import ra.common.service.ServiceStatusListener;
 import ra.util.Config;
-import ra.util.SystemSettings;
 
 import javax.net.ssl.*;
-import java.io.File;
 import java.io.IOException;
 import java.net.Proxy;
 import java.net.URL;

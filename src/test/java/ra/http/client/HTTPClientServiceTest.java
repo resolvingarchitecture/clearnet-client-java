@@ -6,6 +6,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import ra.common.DLC;
 import ra.common.Envelope;
+import ra.common.network.NetworkBuilderStrategy;
 
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -30,8 +31,10 @@ public class HTTPClientServiceTest {
         props.setProperty(RA_HTTP_CLIENT_TRUST_ALL, "true");
 
         producer = new MockProducer();
-
-        service = new HTTPClientService(producer, null);
+        NetworkBuilderStrategy strategy = new NetworkBuilderStrategy();
+        strategy.maxKnownPeers = 5;
+        strategy.minKnownPeers = 1;
+        service = new HTTPClientService(producer, null, strategy);
 
         ready = service.start(props);
     }
@@ -59,7 +62,7 @@ public class HTTPClientServiceTest {
         }
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
-        service.send(envelope);
+        service.sendOut(envelope);
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }
@@ -76,7 +79,7 @@ public class HTTPClientServiceTest {
         }
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
-        service.send(envelope);
+        service.sendOut(envelope);
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }

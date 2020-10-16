@@ -7,12 +7,12 @@ import ra.common.file.Multipart;
 import ra.common.messaging.DocumentMessage;
 import ra.common.messaging.Message;
 import ra.common.messaging.MessageProducer;
+import ra.common.network.NetworkBuilderStrategy;
 import ra.common.network.NetworkConnectionReport;
 import ra.common.network.NetworkService;
 import ra.common.network.NetworkStatus;
 import ra.common.route.ExternalRoute;
 import ra.common.route.Route;
-import ra.common.service.BaseService;
 import ra.common.service.ServiceStatus;
 import ra.common.service.ServiceStatusListener;
 import ra.util.Config;
@@ -87,27 +87,24 @@ public class HTTPClientService extends NetworkService {
 
     protected Proxy proxy = null;
 
-    public HTTPClientService() {
-    }
-
-    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener) {
-        super(producer, listener);
+    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener, NetworkBuilderStrategy strategy) {
+        super(producer, listener, strategy);
     }
 
     @Override
     public void handleDocument(Envelope envelope) {
         Route r = envelope.getDynamicRoutingSlip().getCurrentRoute();
         switch(r.getOperation()) {
-            case OPERATION_SEND: {send(envelope);break;}
+            case OPERATION_SEND: {sendOut(envelope);break;}
             default: {deadLetter(envelope);break;}
         }
     }
 
     @Override
-    public boolean send(Envelope e) {
+    public Boolean sendOut(Envelope e) {
         if(!isConnected() && !connect()) {
             e.getMessage().addErrorMessage("HTTP Client not connected and unable to connect.");
-            producer.send(e);
+            send(e);
             return false;
         }
         Message m = e.getMessage();
@@ -117,7 +114,7 @@ public class HTTPClientService extends NetworkService {
         } else {
             LOG.info("URL must not be null.");
             m.addErrorMessage("URL must not be null.");
-            producer.send(e);
+            send(e);
             return false;
         }
         Map<String, Object> h = e.getHeaders();
@@ -148,7 +145,7 @@ public class HTTPClientService extends NetworkService {
                 // TODO: Provide error message
                 LOG.warning("IOException caught while building HTTP body with multipart: " + e1.getLocalizedMessage());
                 m.addErrorMessage("IOException caught while building HTTP body with multipart: " + e1.getLocalizedMessage());
-                producer.send(e);
+                send(e);
                 return false;
             }
             cacheControl = new CacheControl.Builder().noCache().build();
@@ -174,7 +171,7 @@ public class HTTPClientService extends NetworkService {
             } else {
                 LOG.warning("Only DocumentMessages supported at this time.");
                 DLC.addErrorMessage("Only DocumentMessages supported at this time.", e);
-                producer.send(e);
+                send(e);
                 return false;
             }
         } else {
@@ -202,7 +199,7 @@ public class HTTPClientService extends NetworkService {
             default: {
                 LOG.warning("Envelope.action must be set to ADD, UPDATE, REMOVE, or VIEW");
                 m.addErrorMessage("Envelope.action must be set to ADD, UPDATE, REMOVE, or VIEW");
-                producer.send(e);
+                send(e);
                 return false;
             }
         }
@@ -210,7 +207,7 @@ public class HTTPClientService extends NetworkService {
         if(req == null) {
             LOG.warning("okhttp3 builder didn't build request.");
             m.addErrorMessage("okhttp3 builder didn't build request.");
-            producer.send(e);
+            send(e);
             return false;
         }
         Response response = null;
@@ -228,13 +225,13 @@ public class HTTPClientService extends NetworkService {
                     LOG.warning(response.toString()+" - code="+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(start, end, m, url.toString());
-                    producer.send(e);
+                    send(e);
                     return false;
                 }
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
                 m.addErrorMessage(e1.getLocalizedMessage());
-                producer.send(e);
+                send(e);
                 return false;
             }
         } else {
@@ -242,7 +239,7 @@ public class HTTPClientService extends NetworkService {
             if(httpClient == null) {
                 LOG.severe("httpClient was not set up.");
                 m.addErrorMessage("httpClient was not set up.");
-                producer.send(e);
+                send(e);
                 return false;
             }
             try {
@@ -253,13 +250,13 @@ public class HTTPClientService extends NetworkService {
                     LOG.warning("HTTP request not successful: "+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(start, end, m, url.toString());
-                    producer.send(e);
+                    send(e);
                     return false;
                 }
             } catch (IOException e2) {
                 LOG.warning(e2.getLocalizedMessage());
                 m.addErrorMessage(e2.getLocalizedMessage());
-                producer.send(e);
+                send(e);
                 return false;
             }
         }
@@ -283,7 +280,15 @@ public class HTTPClientService extends NetworkService {
             LOG.info("Body was null.");
             DLC.addContent(null,e);
         }
-        return producer.send(e);
+        return receiveIn(e);
+    }
+
+    @Override
+    protected Boolean receiveIn(Envelope e) {
+        if(!super.receiveIn(e)) {
+            return send(e);
+        }
+        return true;
     }
 
     protected void handleFailure(long start, long end, Message m, String url) {

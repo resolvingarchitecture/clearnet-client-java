@@ -7,7 +7,10 @@ import ra.common.file.Multipart;
 import ra.common.messaging.DocumentMessage;
 import ra.common.messaging.Message;
 import ra.common.messaging.MessageProducer;
-import ra.common.network.NetworkPacket;
+import ra.common.network.NetworkConnectionReport;
+import ra.common.network.NetworkService;
+import ra.common.network.NetworkStatus;
+import ra.common.route.ExternalRoute;
 import ra.common.route.Route;
 import ra.common.service.BaseService;
 import ra.common.service.ServiceStatus;
@@ -27,7 +30,7 @@ import java.util.logging.Logger;
 /**
  * HTTP Client as a service.
  */
-public class HTTPClientService extends BaseService {
+public class HTTPClientService extends NetworkService {
 
     private static final Logger LOG = Logger.getLogger(HTTPClientService.class.getName());
 
@@ -83,7 +86,6 @@ public class HTTPClientService extends BaseService {
     protected Properties config;
 
     protected Proxy proxy = null;
-    private boolean connected = false;
 
     public HTTPClientService() {
     }
@@ -101,9 +103,11 @@ public class HTTPClientService extends BaseService {
         }
     }
 
-    public Boolean send(NetworkPacket packet) {
-        Envelope e = packet.getEnvelope();
-        if(!connected && !connect(e)) {
+    @Override
+    public boolean send(Envelope e) {
+        if(!isConnected() && !connect()) {
+            e.getMessage().addErrorMessage("HTTP Client not connected and unable to connect.");
+            producer.send(e);
             return false;
         }
         Message m = e.getMessage();
@@ -151,7 +155,7 @@ public class HTTPClientService extends BaseService {
         }
 
         Headers headers = Headers.of(hStr);
-        if(packet.getSendContentOnly()) {
+        if(e.getRoute() instanceof ExternalRoute && ((ExternalRoute)e.getRoute()).getSendContentOnly()) {
             if (m instanceof DocumentMessage) {
                 Object contentObj = DLC.getContent(e);
                 if (contentObj instanceof String) {
@@ -175,9 +179,9 @@ public class HTTPClientService extends BaseService {
             }
         } else {
             if (bodyBytes == null) {
-                bodyBytes = ByteBuffer.wrap(packet.toJSON().getBytes());
+                bodyBytes = ByteBuffer.wrap(e.toJSON().getBytes());
             } else {
-                bodyBytes.put(packet.toJSON().getBytes());
+                bodyBytes.put(e.toJSON().getBytes());
             }
         }
 
@@ -210,16 +214,20 @@ public class HTTPClientService extends BaseService {
             return false;
         }
         Response response = null;
+        long start = 0L;
+        long end = 0L;
         if(url.toString().startsWith("https:")) {
             LOG.info("Sending https request, host="+url.getHost());
 //            if(trustedHosts.contains(url.getHost())) {
             try {
 //                    LOG.info("Trusted host, using compatible connection...");
+                start = new Date().getTime();
                 response = httpsStrongClient.newCall(req).execute();
                 if(!response.isSuccessful()) {
+                    end = new Date().getTime();
                     LOG.warning(response.toString()+" - code="+response.code());
                     m.addErrorMessage(response.code()+"");
-                    handleFailure(m);
+                    handleFailure(start, end, m, url.toString());
                     producer.send(e);
                     return false;
                 }
@@ -229,20 +237,6 @@ public class HTTPClientService extends BaseService {
                 producer.send(e);
                 return false;
             }
-//            } else {
-//                try {
-//                    System.out.println(ClearnetClientSensor.class.getSimpleName() + ": using strong connection...");
-//                    response = httpsStrongClient.newCall(req).execute();
-//                    if (!response.isSuccessful()) {
-//                        m.addErrorMessage(response.code()+"");
-//                        return false;
-//                    }
-//                } catch (IOException ex) {
-//                    ex.printStackTrace();
-//                    m.addErrorMessage(ex.getLocalizedMessage());
-//                    return false;
-//                }
-//            }
         } else {
             LOG.info("Sending http request, host="+url.getHost());
             if(httpClient == null) {
@@ -252,11 +246,13 @@ public class HTTPClientService extends BaseService {
                 return false;
             }
             try {
+                start = new Date().getTime();
                 response = httpClient.newCall(req).execute();
                 if(!response.isSuccessful()) {
+                    end = new Date().getTime();
                     LOG.warning("HTTP request not successful: "+response.code());
                     m.addErrorMessage(response.code()+"");
-                    handleFailure(m);
+                    handleFailure(start, end, m, url.toString());
                     producer.send(e);
                     return false;
                 }
@@ -290,61 +286,95 @@ public class HTTPClientService extends BaseService {
         return producer.send(e);
     }
 
-    protected void handleFailure(Message m) {
+    protected void handleFailure(long start, long end, Message m, String url) {
         if(m!=null && m.getErrorMessages()!=null && m.getErrorMessages().size()>0) {
-            boolean blocked = false;
-            for (String err : m.getErrorMessages()) {
-                LOG.warning("HTTP Error Message: " + err);
-                if(!blocked) {
-                    switch (err) {
+            for (String networkCode : m.getErrorMessages()) {
+                LOG.warning("HTTP Error Code: " + networkCode);
+                    switch (networkCode) {
                         case "403": {
                             // Forbidden
-                            LOG.info("Received HTTP 403 response: Forbidden. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED-FORBIDDEN");
-                            blocked = true;
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-FORBIDDEN",
+                                    "Received HTTP 403 response: Forbidden. HTTP Request considered blocked.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                         case "408": {
                             // Request Timeout
-                            LOG.info("Received HTTP 408 response: Request Timeout. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED-TIMEOUT");
-                            blocked = true;
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-TIMEOUT",
+                                    "Received HTTP 408 response: Request Timeout. HTTP Request considered blocked.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                         case "410": {
                             // Gone
-                            LOG.info("Received HTTP 410 response: Gone. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED-GONE");
-                            blocked = true;
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-GONE",
+                                    "Received HTTP 410 response: Gone. HTTP Request considered blocked.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                         case "418": {
                             // I'm a teapot
-                            LOG.warning("Received HTTP 418 response: I'm a teapot. HTTP Server ignoring.");
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-TEAPOT",
+                                    "Received HTTP 418 response: I'm a teapot. Might be blocking.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                         case "451": {
                             // Unavailable for legal reasons; your IP address might be denied access to the resource
-                            LOG.info("Received HTTP 451 response: unavailable for legal reasons. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED-LEGAL");
-                            blocked = true;
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-LEGAL",
+                                    "Received HTTP 451 response: unavailable for legal reasons. Your IP address might be denied access to the resource. HTTP Request considered blocked.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                         case "511": {
                             // Network Authentication Required
-                            LOG.info("Received HTTP 511 response: network authentication required. HTTP Request considered blocked.");
-                            m.addErrorMessage("BLOCKED-AUTHN");
-                            blocked = true;
+                            connectionReport(new NetworkConnectionReport(
+                                    start,
+                                    end,
+                                    url,
+                                    getNetworkState().network,
+                                    networkCode,
+                                    "BLOCKED-AUTHN",
+                                    "Received HTTP 511 response: network authentication required. HTTP Request considered blocked.",
+                                    getNetworkState().networkStatus));
                             break;
                         }
                     }
-                }
             }
         }
     }
 
-    public boolean connect(Envelope env) {
-        Message m = env.getMessage();
+    public boolean connect() {
         boolean trustAllCerts = "true".equals(config.get(RA_HTTP_CLIENT_TRUST_ALL));
         SSLContext trustAllSSLContext = null;
         try {
@@ -355,13 +385,9 @@ public class HTTPClientService extends BaseService {
             }
         } catch (NoSuchAlgorithmException e) {
             LOG.warning(e.getLocalizedMessage());
-            m.addErrorMessage(e.getLocalizedMessage());
-            producer.send(env);
             return false;
         } catch (KeyManagementException e) {
             LOG.warning(e.getLocalizedMessage());
-            m.addErrorMessage(e.getLocalizedMessage());
-            producer.send(env);
             return false;
         }
 
@@ -482,11 +508,11 @@ public class HTTPClientService extends BaseService {
 
         } catch (Exception e) {
             LOG.warning("Exception caught launching HTTP Client Service: " + e.getLocalizedMessage());
-            m.addErrorMessage("Exception caught launching HTTP Client Service: " + e.getLocalizedMessage());
-            producer.send(env);
+            updateNetworkStatus(NetworkStatus.ERROR);
+            updateStatus(ServiceStatus.ERROR);
             return false;
         }
-        connected = true;
+        updateNetworkStatus(NetworkStatus.CONNECTED);
         return true;
     }
 
@@ -498,13 +524,12 @@ public class HTTPClientService extends BaseService {
         httpsCompatibleSpec = null;
         httpsStrongClient = null;
         httpsStrongSpec = null;
-
-        connected = false;
+        updateNetworkStatus(NetworkStatus.DISCONNECTED);
         return true;
     }
 
     public boolean isConnected() {
-        return connected;
+        return getNetworkState().networkStatus == NetworkStatus.CONNECTED;
     }
 
     @Override
@@ -519,6 +544,8 @@ public class HTTPClientService extends BaseService {
             return false;
         }
         config.put(RA_HTTP_CLIENT_DIR, getServiceDirectory().getAbsolutePath());
+        updateStatus(ServiceStatus.STARTING);
+        connect();
         return true;
     }
 
@@ -537,7 +564,8 @@ public class HTTPClientService extends BaseService {
     @Override
     public boolean restart() {
         LOG.info("Restarting...");
-
+        disconnect();
+        connect();
         LOG.info("Restarted.");
         return true;
     }
@@ -545,7 +573,8 @@ public class HTTPClientService extends BaseService {
     @Override
     public boolean shutdown() {
         LOG.info("Shutting down...");
-
+        updateNetworkStatus(NetworkStatus.DISCONNECTED);
+        updateStatus(ServiceStatus.SHUTDOWN);
         LOG.info("Shutdown.");
         return true;
     }

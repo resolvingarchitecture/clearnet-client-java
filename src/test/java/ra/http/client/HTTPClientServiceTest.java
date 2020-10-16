@@ -6,7 +6,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import ra.common.DLC;
 import ra.common.Envelope;
-import ra.common.network.Request;
 
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -60,9 +59,7 @@ public class HTTPClientServiceTest {
         }
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
-        Request request = new Request();
-        request.setEnvelope(envelope);
-        service.send(request);
+        service.send(envelope);
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }
@@ -79,9 +76,7 @@ public class HTTPClientServiceTest {
         }
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
-        Request request = new Request();
-        request.setEnvelope(envelope);
-        service.send(request);
+        service.send(envelope);
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }

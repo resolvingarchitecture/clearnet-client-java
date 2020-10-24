@@ -7,10 +7,7 @@ import ra.common.file.Multipart;
 import ra.common.messaging.DocumentMessage;
 import ra.common.messaging.Message;
 import ra.common.messaging.MessageProducer;
-import ra.common.network.NetworkBuilderStrategy;
-import ra.common.network.NetworkConnectionReport;
-import ra.common.network.NetworkService;
-import ra.common.network.NetworkStatus;
+import ra.common.network.*;
 import ra.common.route.ExternalRoute;
 import ra.common.route.Route;
 import ra.common.service.ServiceStatus;
@@ -19,6 +16,7 @@ import ra.util.Config;
 
 import javax.net.ssl.*;
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.net.Proxy;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -109,13 +107,24 @@ public class HTTPClientService extends NetworkService {
         }
         Message m = e.getMessage();
         URL url = e.getURL();
-        if (url != null) {
-            LOG.info("URL=" + url.toString());
-        } else {
-            LOG.info("URL must not be null.");
-            m.addErrorMessage("URL must not be null.");
+        NetworkPeer dest;
+        if(url==null && e.getRoute()!=null && e.getRoute() instanceof ExternalRoute) {
+            dest = ((ExternalRoute)e.getRoute()).getDestination();
+            if (dest.getId() != null) {
+                try {
+                    url = new URL("http://"+dest.getId());
+                } catch (MalformedURLException malformedURLException) {
+                    LOG.warning(malformedURLException.getLocalizedMessage());
+                }
+            }
+        }
+        if(url == null) {
+            LOG.info("Must provide either a URL or External Route with destination Network Peer.");
+            m.addErrorMessage("Must provide either a URL or External Route with destination Network Peer.");
             send(e);
             return false;
+        } else {
+            LOG.info("URL=" + url.toString());
         }
         Map<String, Object> h = e.getHeaders();
         Map<String, String> hStr = new HashMap<>();

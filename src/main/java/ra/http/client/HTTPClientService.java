@@ -89,6 +89,10 @@ public class HTTPClientService extends NetworkService {
         super("HTTP", producer, listener);
     }
 
+    protected HTTPClientService(String network, MessageProducer producer, ServiceStatusListener listener) {
+        super(network, producer, listener);
+    }
+
     @Override
     public void handleDocument(Envelope envelope) {
         Route r = envelope.getDynamicRoutingSlip().getCurrentRoute();

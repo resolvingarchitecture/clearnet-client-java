@@ -85,8 +85,8 @@ public class HTTPClientService extends NetworkService {
 
     protected Proxy proxy = null;
 
-    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener, NetworkBuilderStrategy strategy) {
-        super(producer, listener, strategy);
+    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener) {
+        super("HTTP", producer, listener);
     }
 
     @Override

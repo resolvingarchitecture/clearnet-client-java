@@ -34,7 +34,7 @@ public class HTTPClientServiceTest {
         NetworkBuilderStrategy strategy = new NetworkBuilderStrategy();
         strategy.maxKnownPeers = 5;
         strategy.minKnownPeers = 1;
-        service = new HTTPClientService(producer, null, strategy);
+        service = new HTTPClientService(producer, null);
 
         ready = service.start(props);
     }

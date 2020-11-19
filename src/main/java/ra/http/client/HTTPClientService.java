@@ -11,7 +11,7 @@ import ra.common.network.*;
 import ra.common.route.ExternalRoute;
 import ra.common.route.Route;
 import ra.common.service.ServiceStatus;
-import ra.common.service.ServiceStatusListener;
+import ra.common.service.ServiceStatusObserver;
 import ra.util.Config;
 
 import javax.net.ssl.*;
@@ -85,12 +85,12 @@ public class HTTPClientService extends NetworkService {
 
     protected Proxy proxy = null;
 
-    public HTTPClientService(MessageProducer producer, ServiceStatusListener listener) {
-        super("HTTP", producer, listener);
+    public HTTPClientService(MessageProducer producer, ServiceStatusObserver observer) {
+        super("HTTP", producer, observer);
     }
 
-    protected HTTPClientService(String network, MessageProducer producer, ServiceStatusListener listener) {
-        super(network, producer, listener);
+    protected HTTPClientService(String network, MessageProducer producer, ServiceStatusObserver observer) {
+        super(network, producer, observer);
     }
 
     @Override

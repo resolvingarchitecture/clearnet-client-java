@@ -563,8 +563,7 @@ public class HTTPClientService extends NetworkService {
         }
         config.put(RA_HTTP_CLIENT_DIR, getServiceDirectory().getAbsolutePath());
         updateStatus(ServiceStatus.STARTING);
-        connect();
-        return true;
+        return connect();
     }
 
     @Override

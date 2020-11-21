@@ -1,6 +1,22 @@
 package ra.http.client;
 
 import okhttp3.*;
+import org.eclipse.jetty.server.Handler;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.server.handler.DefaultHandler;
+import org.eclipse.jetty.server.handler.HandlerCollection;
+import org.eclipse.jetty.server.handler.ResourceHandler;
+import org.eclipse.jetty.server.session.FileSessionDataStore;
+import org.eclipse.jetty.server.session.NullSessionCache;
+import org.eclipse.jetty.server.session.SessionCache;
+import org.eclipse.jetty.server.session.SessionHandler;
+import org.eclipse.jetty.websocket.api.WebSocketPolicy;
+import org.eclipse.jetty.websocket.server.WebSocketHandler;
+import org.eclipse.jetty.websocket.servlet.ServletUpgradeRequest;
+import org.eclipse.jetty.websocket.servlet.ServletUpgradeResponse;
+import org.eclipse.jetty.websocket.servlet.WebSocketCreator;
+import org.eclipse.jetty.websocket.servlet.WebSocketServletFactory;
 import ra.common.Envelope;
 import ra.common.file.Multipart;
 import ra.common.messaging.DocumentMessage;
@@ -11,10 +27,14 @@ import ra.common.route.ExternalRoute;
 import ra.common.route.Route;
 import ra.common.service.ServiceStatus;
 import ra.common.service.ServiceStatusObserver;
+import ra.util.BrowserUtil;
 import ra.util.Config;
 
 import javax.net.ssl.*;
+import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.Proxy;
 import java.net.URL;
@@ -38,6 +58,24 @@ public class HTTPClientService extends NetworkService {
     public static final String RA_HTTP_CLIENT_TRUST_ALL = "ra.http.client.trustallcerts";
 
     public static int SESSION_INACTIVITY_INTERVAL = 60 * 60; // 60 minutes
+
+    /**
+     * Configuration of Servers in the form:
+     *      API: name, API, address, port, concrete implementation ra.http.server.EnvelopeHandler
+     *      PROXY: name, PROXY, address, port, concrete implementation ra.http.server.EnvelopeHandler
+     *      Web App: name, WEB, address, port, concrete implementation ra.http.server.EnvelopeHandler, launch on start, relative resource directory, use WebSocket, websocket adaptor (optional)
+     *      SPA Web App: name, SPA, address, port, concrete implementation ra.http.server.EnvelopeHandler, launch on start, relative resource directory, use WebSocket, websocket adaptor (optional)
+     */
+    public static final String RA_HTTP_SERVER_CONFIGS = "ra.http.server.configs";
+    public static final String RA_HTTP_SERVER_DIR = "ra.http.server.dir";
+    public static final String HANDLER_ID = "ra.http.server.handler.id";
+    public static final String SESSION_ID = "ra.http.server.session.id";
+
+    private boolean isTest = false;
+
+    private Map<String, Server> servers = new HashMap<>();
+    private Map<String, HandlerCollection> handlers = new HashMap<>();
+
 
     protected static final Set<String> trustedHosts = new HashSet<>();
 
@@ -541,6 +579,260 @@ public class HTTPClientService extends NetworkService {
         return getNetworkState().networkStatus == NetworkStatus.CONNECTED;
     }
 
+    private boolean determineAddrPortUsed(String addrPort) {
+        for(String addrPortInt : servers.keySet()) {
+            if(addrPortInt.equals(addrPort))
+                return true;
+        }
+        return false;
+    }
+
+    private SessionHandler fileSessionHandler() {
+        SessionHandler sessionHandler = new SessionHandler();
+        SessionCache sessionCache = new NullSessionCache(sessionHandler);
+        sessionCache.setSessionDataStore(fileSessionDataStore());
+        sessionHandler.setSessionCache(sessionCache);
+        sessionHandler.setHttpOnly(true);
+        // make additional changes to your SessionHandler here
+        return sessionHandler;
+    }
+
+    private FileSessionDataStore fileSessionDataStore() {
+        FileSessionDataStore fileSessionDataStore = new FileSessionDataStore();
+        File storeDir = new File(getServiceDirectory(), "http-session-store");
+        storeDir.mkdir();
+        fileSessionDataStore.setStoreDir(storeDir);
+        return fileSessionDataStore;
+    }
+
+    protected boolean launch(String spec) {
+        Server server = null;
+        boolean launchOnStart = false;
+
+        String[] params = spec.split(",");
+
+        String name = params[0].trim();
+        if (name == null) {
+            LOG.severe("Name must be provided for HTTP server.");
+            return false;
+        }
+
+        String typeParam = params[1].trim();
+        if (typeParam == null) {
+            LOG.severe("Name must be provided for HTTP server.");
+            return false;
+        }
+
+        String addrParam = params[2].trim();
+        if (addrParam == null) {
+            LOG.severe("Address must be provided for HTTP server with name=" + name);
+            return false;
+        }
+
+        String portParam = params[3].trim();
+        if (portParam == null) {
+            LOG.severe("Port must be provided for HTTP server with name=" + name);
+            return false;
+        }
+        int port = Integer.parseInt(portParam);
+        String addrPort = addrParam+":"+portParam;
+        if(determineAddrPortUsed(addrPort)) {
+            LOG.severe(addrPort+" already in use.");
+            return false;
+        }
+
+        String handlerParam = params[4].trim();
+        if(handlerParam==null) {
+            LOG.severe("Handler must be provided for HTTP server.");
+            return false;
+        }
+
+        server = new Server(new InetSocketAddress(addrParam, port));
+        servers.put(addrPort, server);
+
+        HandlerCollection serverHandlers = new HandlerCollection();
+        handlers.put(addrPort, serverHandlers);
+
+        if (!"WEB".equals(typeParam) && !"SPA".equals(typeParam)) {
+            serverHandlers.addHandler(fileSessionHandler());
+            EnvelopeHandler handler = null;
+            try {
+                handler = (EnvelopeHandler) Class.forName(handlerParam).getConstructor().newInstance();
+            } catch (Exception e) {
+                LOG.severe(e.getLocalizedMessage());
+                return false;
+            }
+            handler.setService(this);
+            handler.setServerName(name);
+            handler.setParameters(params);
+            serverHandlers.addHandler(handler);
+        } else {
+            String launchOnStartParam = params[5].trim();
+            if(launchOnStartParam == null) {
+                LOG.severe("Launch on start (param 6) is required when using type=WEB or SPA");
+                return false;
+            }
+            launchOnStart = "true".equals(launchOnStartParam);
+
+            String resourceDirectory = params[6].trim();
+            URL webDirURL = this.getClass().getClassLoader().getResource(resourceDirectory);
+            ResourceHandler resourceHandler = new ResourceHandler();
+            resourceHandler.setDirectoriesListed(false);
+//                resourceHandler.setWelcomeFiles(new String[]{"index.html"});
+            if (webDirURL != null) {
+                resourceHandler.setResourceBase(webDirURL.toExternalForm());
+            }
+
+            boolean useWebSocket = params.length > 7 && "true".equals(params[7].trim());
+            String webSocketAdapter = null;
+            if (useWebSocket && params.length > 8) {
+                webSocketAdapter = params[8].trim();
+            }
+            // TODO: Make Web Socket context path configurable
+
+            ContextHandler wsContext = null;
+            EnvelopeWebSocket webSocket = null;
+            if (useWebSocket) {
+                if (webSocketAdapter == null) {
+                    // default
+                    webSocket = new EnvelopeWebSocket(this);
+                    LOG.info("No custom EnvelopWebSocket class provided; using generic one.");
+                } else {
+                    try {
+                        webSocket = (EnvelopeWebSocket) Class.forName(webSocketAdapter).getConstructor().newInstance();
+                        webSocket.setService(this);
+                    } catch (InstantiationException e) {
+                        LOG.severe("Unable to instantiate WebSocket of type: " + webSocketAdapter);
+                        return false;
+                    } catch (IllegalAccessException e) {
+                        LOG.severe("Illegal Access caught when attempting to instantiate WebSocket of type: " + webSocketAdapter);
+                        return false;
+                    } catch (ClassNotFoundException e) {
+                        LOG.severe("WebSocket class " + webSocketAdapter + " not found. Unable to instantiate.");
+                        return false;
+                    } catch (NoSuchMethodException e) {
+                        LOG.severe(e.getLocalizedMessage());
+                        return false;
+                    } catch (InvocationTargetException e) {
+                        LOG.severe(e.getLocalizedMessage());
+                        return false;
+                    }
+                }
+                if (webSocket == null) {
+                    LOG.severe("WebSocket configured to be launched yet unable to instantiate.");
+                    return false;
+                } else {
+                    EnvelopeWebSocket finalWebSocket = webSocket;
+                    WebSocketHandler wsHandler = new WebSocketHandler() {
+                        @Override
+                        public void configure(WebSocketServletFactory factory) {
+                            WebSocketPolicy policy = factory.getPolicy();
+                            // set a one hour timeout
+                            policy.setIdleTimeout(60 * 60 * 1000);
+//                            policy.setAsyncWriteTimeout(60 * 1000);
+//                            int maxSize = 100 * 1000000;
+//                            policy.setMaxBinaryMessageSize(maxSize);
+//                            policy.setMaxBinaryMessageBufferSize(maxSize);
+//                            policy.setMaxTextMessageSize(maxSize);
+//                            policy.setMaxTextMessageBufferSize(maxSize);
+
+                            factory.setCreator(new WebSocketCreator() {
+                                @Override
+                                public Object createWebSocket(ServletUpgradeRequest req, ServletUpgradeResponse resp) {
+                                    String query = req.getRequestURI().toString();
+                                    if ((query == null) || (query.length() <= 0)) {
+                                        try {
+                                            resp.sendForbidden("Unspecified query");
+                                        } catch (IOException e) {
+
+                                        }
+                                        return null;
+                                    }
+                                    return finalWebSocket;
+                                }
+                            });
+                        }
+
+                    };
+                    wsContext = new ContextHandler();
+                    // TODO: Make ws ra.http.server.EnvelopeJSONDataHandlerext path configurable
+                    wsContext.setContextPath("/api/*");
+                    wsContext.setHandler(wsHandler);
+                }
+            }
+
+            serverHandlers.addHandler(fileSessionHandler());
+
+            if ("SPA".equals(typeParam)) {
+                serverHandlers.addHandler(new SPAHandler());
+            }
+
+            // TODO: Make data context path configurable
+            ContextHandler dataContext = new ContextHandler();
+            dataContext.setContextPath("/data/*");
+            serverHandlers.addHandler(dataContext);
+            serverHandlers.addHandler(resourceHandler);
+            if (wsContext != null) {
+                serverHandlers.addHandler(wsContext);
+            }
+            DefaultHandler defaultHandler = new DefaultHandler();
+            serverHandlers.addHandler(defaultHandler);
+
+//                if (dataHandlerStr != null) { // optional
+//                    try {
+//                        dataHandler = (EnvelopeHandler) Class.forName(dataHandlerStr).newInstance();
+//                        dataHandler.setService(this);
+//                        dataHandler.setServiceName(name);
+//                        dataHandler.setParameters(params);
+//                        dataContext.setHandler(dataHandler);
+//                    } catch (InstantiationException e) {
+//                        LOG.warning("Data Handler must be implementation of " + EnvelopeHandler.class.getName() + " to ensure asynchronous replies with Envelopes gets returned to calling thread.");
+//                        return false;
+//                    } catch (IllegalAccessException e) {
+//                        LOG.warning("Getting an IllegalAccessException while attempting to instantiate data Handler implementation class " + dataHandlerStr + ". Launch application with appropriate read access.");
+//                        return false;
+//                    } catch (ClassNotFoundException e) {
+//                        LOG.warning("Data Handler implementation " + dataHandlerStr + " not found. Ensure library included.");
+//                        return false;
+//                    }
+//                }
+        }
+
+        server.setHandler(serverHandlers);
+        LOG.info("Starting HTTP Server for " + name + " on "+addrParam+":" + port);
+        try {
+            server.start();
+            LOG.finest(server.dump());
+            LOG.info("HTTP Server for " + name + " started on "+addrParam+":" + port);
+        } catch (Exception e1) {
+            LOG.severe("Exception caught while starting HTTP Server for " + name + " on "+addrParam+" with port " + port + ": " + e1.getLocalizedMessage());
+//            updateStatus(SensorStatus.ERROR);
+            return false;
+        }
+        if (launchOnStart)
+            BrowserUtil.launch(addrParam + ":" + port + "/");
+//            if (webSocket != null) {
+//                LOG.info("Subscribing WebSocket (" + webSocket.getClass().getName() + ") to TEXT notifications...");
+        // Subscribe to Text notifications
+//            Subscription subscription = new Subscription() {
+//                @Override
+//                public void notifyOfEvent(Envelope envelope) {
+//                    webSocket.pushEnvelope(envelope);
+//                }
+//            };
+//            SubscriptionRequest r = new SubscriptionRequest(EventMessage.Type.TEXT, subscription);
+//            Envelope e = Envelope.documentFactory();
+//            DLC.addData(SubscriptionRequest.class, r, e);
+//            DLC.addRoute(NotificationService.class, NotificationService.OPERATION_SUBSCRIBE, e);
+//            if (!sensor.sendIn(e)) {
+//                sensor.updateStatus(SensorStatus.ERROR);
+//                LOG.warning("Error sending subscription request to Notification Service for Web Socket.");
+//                return false;
+//            }
+//            }
+        return true;
+    }
+
     @Override
     public boolean start(Properties p) {
         super.start(p);
@@ -553,6 +845,20 @@ public class HTTPClientService extends NetworkService {
             return false;
         }
         config.put(RA_HTTP_CLIENT_DIR, getServiceDirectory().getAbsolutePath());
+
+        String serversConfig = config.getProperty(RA_HTTP_SERVER_CONFIGS);
+        if(serversConfig!=null) {
+            LOG.info("Building servers from configuration: " + serversConfig);
+            String[] serversSpecs = serversConfig.split(":");
+            LOG.info("Number of servers to start: " + serversSpecs.length);
+
+            LOG.info("Starting...");
+            updateStatus(ServiceStatus.STARTING);
+
+            for (String spec : serversSpecs) {
+                launch(spec);
+            }
+        }
         updateStatus(ServiceStatus.STARTING);
         return connect();
     }
@@ -582,6 +888,20 @@ public class HTTPClientService extends NetworkService {
     public boolean shutdown() {
         LOG.info("Shutting down...");
         updateNetworkStatus(NetworkStatus.DISCONNECTED);
+        for(HandlerCollection handlerCollection : handlers.values()) {
+            for(Handler handler : handlerCollection.getHandlers()) {
+                if(handler instanceof EnvelopeHandler) {
+                    ((EnvelopeHandler)handler).invalidateSessions();
+                }
+            }
+        }
+        for(Server server : servers.values()) {
+            try {
+                server.stop();
+            } catch (Exception e) {
+                LOG.warning(e.getLocalizedMessage());
+            }
+        }
         updateStatus(ServiceStatus.SHUTDOWN);
         LOG.info("Shutdown.");
         return true;

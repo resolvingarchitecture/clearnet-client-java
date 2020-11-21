@@ -1,7 +1,6 @@
 package ra.http.client;
 
 import okhttp3.*;
-import ra.common.DLC;
 import ra.common.Envelope;
 import ra.common.file.Multipart;
 import ra.common.messaging.DocumentMessage;
@@ -86,10 +85,10 @@ public class HTTPClientService extends NetworkService {
     protected Proxy proxy = null;
 
     public HTTPClientService(MessageProducer producer, ServiceStatusObserver observer) {
-        super("HTTP", producer, observer);
+        super(Network.HTTP, producer, observer);
     }
 
-    protected HTTPClientService(String network, MessageProducer producer, ServiceStatusObserver observer) {
+    protected HTTPClientService(Network network, MessageProducer producer, ServiceStatusObserver observer) {
         super(network, producer, observer);
     }
 
@@ -167,7 +166,7 @@ public class HTTPClientService extends NetworkService {
         Headers headers = Headers.of(hStr);
         if(e.getRoute() instanceof ExternalRoute && ((ExternalRoute)e.getRoute()).getSendContentOnly()) {
             if (m instanceof DocumentMessage) {
-                Object contentObj = DLC.getContent(e);
+                Object contentObj = e.getContent();
                 if (contentObj instanceof String) {
                     if (bodyBytes == null) {
                         bodyBytes = ByteBuffer.wrap(((String) contentObj).getBytes());
@@ -183,7 +182,7 @@ public class HTTPClientService extends NetworkService {
                 }
             } else {
                 LOG.warning("Only DocumentMessages supported at this time.");
-                DLC.addErrorMessage("Only DocumentMessages supported at this time.", e);
+                e.addErrorMessage("Only DocumentMessages supported at this time.");
                 send(e);
                 return false;
             }
@@ -282,7 +281,7 @@ public class HTTPClientService extends NetworkService {
         ResponseBody responseBody = response.body();
         if(responseBody != null) {
             try {
-                DLC.addContent(responseBody.bytes(),e);
+                e.addContent(responseBody.bytes());
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
             } finally {
@@ -291,17 +290,9 @@ public class HTTPClientService extends NetworkService {
 //            LOG.info(new String((byte[])DLC.getContent(e)));
         } else {
             LOG.info("Body was null.");
-            DLC.addContent(null,e);
+            e.addContent(null);
         }
-        return receiveIn(e);
-    }
-
-    @Override
-    protected Boolean receiveIn(Envelope e) {
-        if(!super.receiveIn(e)) {
-            return send(e);
-        }
-        return true;
+        return producer.send(e);
     }
 
     protected void handleFailure(long start, long end, Message m, String url) {

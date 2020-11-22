@@ -1,4 +1,4 @@
-package ra.http.client;
+package ra.http;
 
 import org.eclipse.jetty.server.Handler;
 
@@ -6,7 +6,7 @@ import org.eclipse.jetty.server.Handler;
  *
  */
 public interface EnvelopeHandler extends Handler {
-    void setService(HTTPClientService service);
+    void setService(HTTPService service);
     void setServerName(String serverName);
     void setParameters(String[] parameters);
     void invalidateSessions();

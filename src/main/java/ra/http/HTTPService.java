@@ -1,4 +1,4 @@
-package ra.http.client;
+package ra.http;
 
 import okhttp3.*;
 import org.eclipse.jetty.server.Handler;
@@ -47,13 +47,13 @@ import java.util.logging.Logger;
 /**
  * HTTP Client as a service.
  */
-public class HTTPClientService extends NetworkService {
+public class HTTPService extends NetworkService {
 
-    private static final Logger LOG = Logger.getLogger(HTTPClientService.class.getName());
+    private static final Logger LOG = Logger.getLogger(HTTPService.class.getName());
 
     public static final String OPERATION_SEND = "SEND";
 
-    public static final String RA_HTTP_CLIENT_CONFIG = "ra-http-client.config";
+    public static final String RA_HTTP_CLIENT_CONFIG = "ra-http.config";
     public static final String RA_HTTP_CLIENT_DIR = "ra.http.client.dir";
     public static final String RA_HTTP_CLIENT_TRUST_ALL = "ra.http.client.trustallcerts";
 
@@ -122,11 +122,11 @@ public class HTTPClientService extends NetworkService {
 
     protected Proxy proxy = null;
 
-    public HTTPClientService(MessageProducer producer, ServiceStatusObserver observer) {
+    public HTTPService(MessageProducer producer, ServiceStatusObserver observer) {
         super(Network.HTTP, producer, observer);
     }
 
-    protected HTTPClientService(Network network, MessageProducer producer, ServiceStatusObserver observer) {
+    protected HTTPService(Network network, MessageProducer producer, ServiceStatusObserver observer) {
         super(network, producer, observer);
     }
 
@@ -836,7 +836,8 @@ public class HTTPClientService extends NetworkService {
     @Override
     public boolean start(Properties p) {
         super.start(p);
-        LOG.info("Initializing...");
+        boolean success = true;
+        LOG.info("Initializing client...");
         updateStatus(ServiceStatus.INITIALIZING);
         try {
             config = Config.loadFromClasspath(RA_HTTP_CLIENT_CONFIG, p, false);
@@ -846,6 +847,7 @@ public class HTTPClientService extends NetworkService {
         }
         config.put(RA_HTTP_CLIENT_DIR, getServiceDirectory().getAbsolutePath());
 
+        LOG.info("Starting server(s)...");
         String serversConfig = config.getProperty(RA_HTTP_SERVER_CONFIGS);
         if(serversConfig!=null) {
             LOG.info("Building servers from configuration: " + serversConfig);
@@ -856,11 +858,15 @@ public class HTTPClientService extends NetworkService {
             updateStatus(ServiceStatus.STARTING);
 
             for (String spec : serversSpecs) {
-                launch(spec);
+                if(!launch(spec))
+                    success = false;
             }
         }
         updateStatus(ServiceStatus.STARTING);
-        return connect();
+        if(!connect()) {
+            success = false;
+        }
+        return success;
     }
 
     @Override
@@ -878,10 +884,34 @@ public class HTTPClientService extends NetworkService {
     @Override
     public boolean restart() {
         LOG.info("Restarting...");
-        disconnect();
-        connect();
-        LOG.info("Restarted.");
-        return true;
+        boolean success = true;
+        if(!disconnect()) {
+            success = false;
+        }
+        for(Server server : servers.values()) {
+            try {
+                server.stop();
+            } catch (Exception e) {
+                LOG.warning(e.getLocalizedMessage());
+                success = false;
+            }
+        }
+        for(Server server : servers.values()) {
+            try {
+                server.start();
+            } catch (Exception e) {
+                LOG.warning(e.getLocalizedMessage());
+                success = false;
+            }
+        }
+        if(!connect()) {
+            success = false;
+        }
+        if(success)
+            LOG.info("Restarted successfully.");
+        else
+            LOG.warning("Restart had problems.");
+        return success;
     }
 
     @Override

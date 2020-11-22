@@ -1,4 +1,4 @@
-package ra.http.client;
+package ra.http;
 
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -6,20 +6,20 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import ra.common.DLC;
 import ra.common.Envelope;
-import ra.common.network.NetworkBuilderStrategy;
 
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Properties;
 import java.util.logging.Logger;
 
-import static ra.http.client.HTTPClientService.RA_HTTP_CLIENT_TRUST_ALL;
+import static ra.http.HTTPService.RA_HTTP_CLIENT_TRUST_ALL;
+import static ra.http.HTTPService.RA_HTTP_SERVER_CONFIGS;
 
-public class HTTPClientServiceTest {
+public class HTTPServiceTest {
 
-    private static final Logger LOG = Logger.getLogger(HTTPClientServiceTest.class.getName());
+    private static final Logger LOG = Logger.getLogger(HTTPServiceTest.class.getName());
 
-    private static HTTPClientService service;
+    private static HTTPService service;
     private static MockProducer producer;
     private static Properties props;
     private static boolean ready = false;
@@ -29,12 +29,10 @@ public class HTTPClientServiceTest {
         LOG.info("Init...");
         props = new Properties();
         props.setProperty(RA_HTTP_CLIENT_TRUST_ALL, "true");
+        props.setProperty(RA_HTTP_SERVER_CONFIGS, "HTTPServiceTest, API, localhost, 8099, ra.http.EnvelopeJSONDataHandler");
 
         producer = new MockProducer();
-        NetworkBuilderStrategy strategy = new NetworkBuilderStrategy();
-        strategy.maxKnownPeers = 5;
-        strategy.minKnownPeers = 1;
-        service = new HTTPClientService(producer, null);
+        service = new HTTPService(producer, null);
 
         ready = service.start(props);
     }
@@ -51,7 +49,7 @@ public class HTTPClientServiceTest {
     }
 
     @Test
-    public void httpTest() {
+    public void httpClientTest() {
         Envelope envelope = Envelope.documentFactory();
         try {
             envelope.setURL(new URL("http://resolvingarchitecture.io"));
@@ -68,7 +66,7 @@ public class HTTPClientServiceTest {
     }
 
     @Test
-    public void httpsTest() {
+    public void httpsClientTest() {
         Envelope envelope = Envelope.documentFactory();
         try {
             envelope.setURL(new URL("https://resolvingarchitecture.io"));
@@ -83,4 +81,22 @@ public class HTTPClientServiceTest {
         String html = new String((byte[]) DLC.getContent(envelope));
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }
+
+    @Test
+    public void httpServerTest() {
+        Envelope envelope = Envelope.documentFactory();
+        try {
+            envelope.setURL(new URL("http://localhost:8099/test"));
+        } catch (MalformedURLException e) {
+            LOG.severe(e.getLocalizedMessage());
+            Assert.fail();
+            return;
+        }
+        envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
+        envelope.setAction(Envelope.Action.GET);
+        service.sendOut(envelope);
+        String html = new String((byte[]) DLC.getContent(envelope));
+        Assert.assertEquals("<html><body>HTTPServiceTest Available</body></html>", html);
+    }
+
 }

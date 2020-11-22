@@ -1,7 +1,6 @@
-package ra.http.client;
+package ra.http;
 
 import ra.common.Client;
-import ra.common.DLC;
 import ra.common.Envelope;
 import ra.common.messaging.MessageProducer;
 

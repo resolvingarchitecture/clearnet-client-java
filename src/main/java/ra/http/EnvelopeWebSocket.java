@@ -1,4 +1,4 @@
-package ra.http.client;
+package ra.http;
 
 import org.eclipse.jetty.websocket.api.RemoteEndpoint;
 import org.eclipse.jetty.websocket.api.Session;
@@ -25,16 +25,16 @@ public class EnvelopeWebSocket extends WebSocketAdapter implements Client {
 
     private static Logger LOG = Logger.getLogger(EnvelopeWebSocket.class.getName());
 
-    protected HTTPClientService service;
+    protected HTTPService service;
     protected Session session;
 
     public EnvelopeWebSocket() {}
 
-    public EnvelopeWebSocket(HTTPClientService service) {
+    public EnvelopeWebSocket(HTTPService service) {
         this.service = service;
     }
 
-    public void setService(HTTPClientService service) {
+    public void setService(HTTPService service) {
         this.service = service;
     }
 

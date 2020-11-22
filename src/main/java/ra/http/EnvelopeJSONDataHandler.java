@@ -1,12 +1,16 @@
-package ra.http.client;
+package ra.http;
 
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.DefaultHandler;
+import org.eclipse.jetty.server.session.*;
+import ra.common.Client;
 import ra.common.DLC;
 import ra.common.Envelope;
 import ra.common.content.Content;
+import ra.common.identity.DID;
 import ra.common.messaging.DocumentMessage;
 import ra.util.JSONParser;
+import ra.util.RandomUtil;
 
 import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
@@ -14,8 +18,6 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.Part;
 import java.io.*;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.util.Collection;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -24,33 +26,31 @@ import java.util.logging.Logger;
 
 /**
  * Handles incoming requests by:
- *  - creating new Envelope from incoming HTTP request
+ *  - creating new Envelope from incoming deserialized JSON request
  *  - sending Envelope to the bus
  *  - blocking until a response is returned
- *  - deserializing the Envelope back into bytes
+ *  - serializing the Envelope into JSON
  *  - setting up Response letting it return
- *
  */
-public class EnvelopeProxyDataHandler extends DefaultHandler implements EnvelopeHandler {
+public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, EnvelopeHandler {
 
-    private static Logger LOG = Logger.getLogger(EnvelopeProxyDataHandler.class.getName());
+    private static Logger LOG = Logger.getLogger(EnvelopeJSONDataHandler.class.getName());
 
-    protected HTTPClientService service;
-    protected Map<String,ClientHold> requests = new HashMap<>();
-
+    private Map<String,ClientHold> requests = new HashMap<>();
+    private String id;
     private String serverName;
     private String[] parameters;
+    protected HTTPService service;
 
-    public EnvelopeProxyDataHandler() {
-
+    public EnvelopeJSONDataHandler() {
+        id = RandomUtil.randomAlphanumeric(16);
     }
 
     @Override
-    public void setService(HTTPClientService service) {
+    public void setService(HTTPService service) {
         this.service = service;
     }
 
-    @Override
     public void setServerName(String serverName) {
         this.serverName = serverName;
     }
@@ -84,81 +84,68 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
             return;
         }
 
-        Envelope envelope = parseEnvelope(request);
-        ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
-        requests.put(envelope.getId(), clientHold);
-        service.send(envelope); // asynchronous call upon; returns upon reaching Message Channel's queue in Service Bus
-
-        if(DLC.getErrorMessages(envelope).size() > 0) {
-            // Just 500 for now
-            LOG.warning("Returning HTTP 500...");
-            response.setStatus(500);
-            baseRequest.setHandled(true);
-            requests.remove(envelope.getId());
+        Session session = (Session)request.getSession(true);
+        Envelope envelope = parseEnvelope(target, request, session.getId());
+        if(DLC.markerPresent("op", envelope)) {
+            // Set response and allow to unwind
+            LOG.info("Received NetOp, replying with {op=200}...");
+            response.setStatus(200);
+            DLC.addContent("{op=200}", envelope);
         } else {
-            // Hold Thread until response or 10 minutes
+            // Set up hold to support async back-end
+            LOG.info("Received normal request; setting up client hold and forwarding to bus...");
+            ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
+            requests.put(envelope.getId(), clientHold);
+
+            service.send(envelope, this); // asynchronous call upon; returns upon reaching Message Channel's queue in SEDA Bus; callback called on final handling of routes
+
+            if (DLC.getErrorMessages(envelope).size() > 0) {
+                // Just 500 for now
+                LOG.warning("Returning HTTP 500...");
+                response.setStatus(500);
+                baseRequest.setHandled(true);
+                requests.remove(envelope.getId());
+            } else {
+                // Hold Thread until response or 30 seconds
 //            LOG.info("Holding HTTP Request for up to 30 seconds waiting for internal asynch response...");
-            clientHold.hold(10 * 60 * 1000); // hold for 10 minutes or until interrupted
+                clientHold.hold(30 * 1000); // hold for 30 seconds or until interrupted
+            }
         }
     }
 
     public void reply(Envelope e) {
-        LOG.info("Reply received...");
         ClientHold hold = requests.get(e.getId());
-        if(hold==null) {
-            LOG.warning("Hold not found.");
-            return;
-        }
         HttpServletResponse response = hold.getResponse();
-        String body = new String(unpackEnvelopeContent(e));
-        try {
-            response.getWriter().print(body);
-        } catch (IOException ex) {
-            LOG.warning(ex.getLocalizedMessage());
-            response.setStatus(500);
-        }
+        DID eDID = e.getDID();
+        LOG.info("DID in header: "+eDID);
+        respond(unpackEnvelopeContent(e), "application/json", response, 200);
         hold.baseRequest.setHandled(true);
         LOG.info("Waking sleeping request thread to return response to caller...");
         hold.wake(); // Interrupt sleep to allow thread to return
         LOG.info("Unwinded request call with response.");
     }
 
-    protected Envelope parseEnvelope(HttpServletRequest request) {
-        LOG.info("Parsing request into Envelope...");
+    protected Envelope parseEnvelope(String target, HttpServletRequest request, String sessionId) {
+        LOG.info("Parsing request into Envelope with target: "+target);
+
         Envelope e = Envelope.documentFactory();
+
         // Must set id in header for asynchronous support
-//        e.setHeader(HTTPServerService.HANDLER_ID, session.sessionId);
-        String uri = request.getRequestURI();
-        LOG.info("URI:"+uri);
-        boolean http = uri.startsWith("http://");
-        boolean https = uri.startsWith("https://");
-        if(!http && !https) {
-            if(uri.contains(":443")) {
-                uri = "https://" + uri;
-            } else {
-                uri = "http://" + uri;
-            }
-        }
-        try {
-            URL url = new URL(uri);
-            e.setURL(url);
-        } catch (MalformedURLException e1) {
-            LOG.warning(e1.getLocalizedMessage());
-        }
+        e.setHeader(HTTPService.HANDLER_ID, id);
+        e.setHeader(HTTPService.SESSION_ID, sessionId);
 
         // Populate method
         String method = request.getMethod();
-//        LOG.info("Incoming method: "+method);
-        if(method != null) {
+        LOG.info("Incoming method: "+method);
+        if(method == null) {
+            e.setAction(Envelope.Action.GET);
+        } else {
             switch (method.toUpperCase()) {
-                case "GET": e.setAction(Envelope.Action.GET);break;
                 case "POST": e.setAction(Envelope.Action.POST);break;
                 case "PUT": e.setAction(Envelope.Action.PUT);break;
                 case "DELETE": e.setAction(Envelope.Action.DELETE);break;
                 default: e.setAction(Envelope.Action.GET);
             }
-        } else {
-            e.setAction(Envelope.Action.GET);
         }
 
         // Populate headers
@@ -174,7 +161,7 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
                     e.setHeader(headerName, headerValue);
                     first = false;
                 } else {
-                    e.setHeader(headerName + Integer.toString(i++), headerValue);
+                    e.setHeader(headerName + i++, headerValue);
                 }
 //                LOG.info("Incoming header:value="+headerName+":"+headerValue);
             }
@@ -237,15 +224,21 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
 
         //Get post formData params
         String postFormBody = getPostRequestFormData(request);
-        if(!postFormBody.isEmpty()){
-            Map<String, Object> bodyMap = (Map<String, Object>) JSONParser.parse(postFormBody);
-            DLC.addData(Map.class, bodyMap, e);
+        LOG.info("PostFormBody: "+postFormBody);
+        if(!postFormBody.isEmpty() && postFormBody.startsWith("{")){
+            // strip Envelope
+            Map<String, Object> m = (Map) JSONParser.parse(postFormBody);
+            if (m != null) {
+                m = (Map) m.get("envelope");
+                if (m != null)
+                    e.fromMap(m);
+            }
         }
 
         // Get query parameters if present
         String query = request.getQueryString();
         if(query!=null) {
-//            LOG.info("Incoming query: "+query);
+            LOG.info("Incoming query: "+query);
             Map<String, String> queryMap = new HashMap<>();
             String[] nvps = query.split("&");
             for (String nvpStr : nvps) {
@@ -264,8 +257,11 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
         return e;
     }
 
-    protected byte[] unpackEnvelopeContent(Envelope e) {
-        return (byte[])DLC.getContent(e);
+    protected String unpackEnvelopeContent(Envelope e) {
+        if(DLC.getContent(e) == null)
+            return "{200}";
+        else
+            return ((Content)DLC.getContent(e)).toJSON();
     }
 
     public String getPostRequestFormData(HttpServletRequest request)  {
@@ -296,6 +292,18 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
         return formData.toString();
     }
 
+    protected void respond(String body, String contentType, HttpServletResponse response, int code) {
+//        LOG.info("Returning response...");
+        response.setContentType(contentType);
+        try {
+            response.getWriter().print(body);
+            response.setStatus(code);
+        } catch (IOException ex) {
+            LOG.warning(ex.getLocalizedMessage());
+            response.setStatus(500);
+        }
+    }
+
     @Override
     public void invalidateSessions() {
 
@@ -309,7 +317,7 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
         private HttpServletResponse response;
         private Envelope envelope;
 
-        public ClientHold(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response, Envelope envelope) {
+        private ClientHold(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response, Envelope envelope) {
             this.target = target;
             this.baseRequest = baseRequest;
             this.request = request;
@@ -317,7 +325,7 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
             this.envelope = envelope;
         }
 
-        public void hold(long waitTimeMs) {
+        private void hold(long waitTimeMs) {
             thread = Thread.currentThread();
             try {
                 Thread.sleep(waitTimeMs);
@@ -326,27 +334,27 @@ public class EnvelopeProxyDataHandler extends DefaultHandler implements Envelope
             }
         }
 
-        public void wake() {
+        private void wake() {
             thread.interrupt();
         }
 
-        public String getTarget() {
+        private String getTarget() {
             return target;
         }
 
-        public Request getBaseRequest() {
+        private Request getBaseRequest() {
             return baseRequest;
         }
 
-        public HttpServletRequest getRequest() {
+        private HttpServletRequest getRequest() {
             return request;
         }
 
-        public HttpServletResponse getResponse() {
+        private HttpServletResponse getResponse() {
             return response;
         }
 
-        public Envelope getEnvelope() {
+        private Envelope getEnvelope() {
             return envelope;
         }
     }

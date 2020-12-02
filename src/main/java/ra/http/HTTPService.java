@@ -122,6 +122,11 @@ public class HTTPService extends NetworkService {
 
     protected Proxy proxy = null;
 
+    public HTTPService() {
+        super();
+        getNetworkState().network = Network.HTTP;
+    }
+
     public HTTPService(MessageProducer producer, ServiceStatusObserver observer) {
         super(Network.HTTP, producer, observer);
     }

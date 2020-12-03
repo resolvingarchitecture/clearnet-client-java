@@ -624,7 +624,7 @@ public class HTTPService extends NetworkService {
 
         String typeParam = params[1].trim();
         if (typeParam == null) {
-            LOG.severe("Name must be provided for HTTP server.");
+            LOG.severe("Listener type name must be provided for HTTP server.");
             return false;
         }
 

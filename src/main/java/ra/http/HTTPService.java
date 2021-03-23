@@ -455,6 +455,7 @@ public class HTTPService extends NetworkService {
             if (proxy == null) {
                 LOG.info("Setting up http client...");
                 httpClient = new OkHttpClient.Builder()
+                        .protocols(Arrays.asList(Protocol.HTTP_1_1, Protocol.HTTP_2))
                         .connectionSpecs(Collections.singletonList(httpSpec))
                         .retryOnConnectionFailure(true)
                         .followRedirects(true)
@@ -462,6 +463,7 @@ public class HTTPService extends NetworkService {
             } else {
                 LOG.info("Setting up http client with proxy...");
                 httpClient = new OkHttpClient.Builder()
+                        .protocols(Arrays.asList(Protocol.HTTP_1_1, Protocol.HTTP_2))
                         .connectionSpecs(Arrays.asList(httpSpec))
                         .retryOnConnectionFailure(true)
                         .followRedirects(true)

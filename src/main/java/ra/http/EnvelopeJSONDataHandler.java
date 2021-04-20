@@ -96,8 +96,8 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
             LOG.info("Received normal request; setting up client hold and forwarding to bus...");
             ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
             requests.put(envelope.getId(), clientHold);
-
-            service.send(envelope, this); // asynchronous call upon; returns upon reaching Message Channel's queue in SEDA Bus; callback called on final handling of routes
+            envelope.addRoute(HTTPService.class.getName(), HTTPService.OPERATION_REPLY);
+            service.send(envelope);
 
             if (DLC.getErrorMessages(envelope).size() > 0) {
                 // Just 500 for now

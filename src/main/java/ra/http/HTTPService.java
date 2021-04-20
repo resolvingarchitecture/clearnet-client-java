@@ -52,6 +52,7 @@ public class HTTPService extends NetworkService {
     private static final Logger LOG = Logger.getLogger(HTTPService.class.getName());
 
     public static final String OPERATION_SEND = "SEND";
+    public static final String OPERATION_REPLY = "REPLY";
 
     public static final String RA_HTTP_CLIENT_CONFIG = "ra-http.config";
     public static final String RA_HTTP_CLIENT_DIR = "ra.http.client.dir";
@@ -75,7 +76,6 @@ public class HTTPService extends NetworkService {
 
     private Map<String, Server> servers = new HashMap<>();
     private Map<String, HandlerCollection> handlers = new HashMap<>();
-
 
     protected static final Set<String> trustedHosts = new HashSet<>();
 
@@ -140,6 +140,7 @@ public class HTTPService extends NetworkService {
         Route r = envelope.getDynamicRoutingSlip().getCurrentRoute();
         switch(r.getOperation()) {
             case OPERATION_SEND: {sendOut(envelope);break;}
+            case OPERATION_REPLY: {reply(envelope);break;}
             default: {deadLetter(envelope);break;}
         }
     }

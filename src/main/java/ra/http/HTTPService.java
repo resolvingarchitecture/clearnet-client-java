@@ -140,7 +140,6 @@ public class HTTPService extends NetworkService {
         Route r = envelope.getDynamicRoutingSlip().getCurrentRoute();
         switch(r.getOperation()) {
             case OPERATION_SEND: {sendOut(envelope);break;}
-            case OPERATION_REPLY: {reply(envelope);break;}
             default: {deadLetter(envelope);break;}
         }
     }

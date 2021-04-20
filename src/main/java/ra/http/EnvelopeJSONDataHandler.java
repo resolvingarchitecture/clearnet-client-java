@@ -96,8 +96,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
             LOG.info("Received normal request; setting up client hold and forwarding to bus...");
             ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
             requests.put(envelope.getId(), clientHold);
-            envelope.addRoute(HTTPService.class.getName(), HTTPService.OPERATION_REPLY);
-            service.send(envelope);
+            service.send(envelope, this);
 
             if (DLC.getErrorMessages(envelope).size() > 0) {
                 // Just 500 for now
@@ -107,7 +106,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
                 requests.remove(envelope.getId());
             } else {
                 // Hold Thread until response or 30 seconds
-//            LOG.info("Holding HTTP Request for up to 30 seconds waiting for internal asynch response...");
+                LOG.info("Holding HTTP Request for up to 30 seconds waiting for internal asynch response...");
                 clientHold.hold(30 * 1000); // hold for 30 seconds or until interrupted
             }
         }
@@ -323,10 +322,10 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
             this.request = request;
             this.response = response;
             this.envelope = envelope;
+            thread = Thread.currentThread();
         }
 
         private void hold(long waitTimeMs) {
-            thread = Thread.currentThread();
             try {
                 Thread.sleep(waitTimeMs);
             } catch (InterruptedException e) {

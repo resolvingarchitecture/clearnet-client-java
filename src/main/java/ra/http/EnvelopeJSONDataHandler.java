@@ -228,9 +228,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
             // strip Envelope
             Map<String, Object> m = (Map) JSONParser.parse(postFormBody);
             if (m != null) {
-                m = (Map) m.get("envelope");
-                if (m != null)
-                    e.fromMap(m);
+                e.fromMap(m);
             }
         }
 

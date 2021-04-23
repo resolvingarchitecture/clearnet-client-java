@@ -338,7 +338,6 @@ public class HTTPService extends NetworkService {
             LOG.info("Body was null.");
             e.addContent(null);
         }
-        e.ratchet();
         return producer.send(e);
     }
 

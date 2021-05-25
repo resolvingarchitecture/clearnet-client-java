@@ -338,7 +338,7 @@ public class HTTPService extends NetworkService {
             LOG.info("Body was null.");
             e.addContent(null);
         }
-        return producer.send(e);
+        return true;
     }
 
     protected void handleFailure(long start, long end, Message m, String url) {

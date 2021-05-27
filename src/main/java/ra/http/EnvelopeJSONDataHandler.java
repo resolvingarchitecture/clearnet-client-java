@@ -255,10 +255,13 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
     }
 
     protected String unpackEnvelopeContent(Envelope e) {
-        if(DLC.getContent(e) == null)
-            return "{200}";
-        else
+        Object contentObj = DLC.getContent(e);
+        if(contentObj instanceof byte[])
+            return new String((byte[])contentObj);
+        else if(contentObj instanceof Content)
             return ((Content)DLC.getContent(e)).toJSON();
+        else
+            return "{"+HttpServletResponse.SC_OK+"}";
     }
 
     public String getPostRequestFormData(HttpServletRequest request)  {

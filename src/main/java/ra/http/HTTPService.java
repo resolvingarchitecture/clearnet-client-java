@@ -170,7 +170,7 @@ public class HTTPService extends NetworkService {
             send(e);
             return false;
         } else {
-            LOG.info("URL=" + url.toString());
+            LOG.info("URL=" + url);
         }
         Map<String, Object> h = e.getHeaders();
         Map<String, String> hStr = new HashMap<>();
@@ -327,7 +327,12 @@ public class HTTPService extends NetworkService {
         ResponseBody responseBody = response.body();
         if(responseBody != null) {
             try {
-                e.addContent(responseBody.bytes());
+                String bodyStr = new String(responseBody.bytes());
+                if("application/json".equals(response.header(Envelope.HEADER_CONTENT_TYPE))) {
+                    e.fromJSON(bodyStr);
+                } else {
+                    e.addContent(bodyStr);
+                }
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
             } finally {
@@ -336,7 +341,6 @@ public class HTTPService extends NetworkService {
 //            LOG.info(new String((byte[])DLC.getContent(e)));
         } else {
             LOG.info("Body was null.");
-            e.addContent(null);
         }
         return true;
     }

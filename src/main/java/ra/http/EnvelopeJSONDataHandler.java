@@ -86,18 +86,17 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
 
         Session session = (Session)request.getSession(true);
         Envelope envelope = parseEnvelope(target, request, session.getId());
-        if(DLC.markerPresent("op", envelope)) {
+        if(envelope.markerPresent("op")) {
             // Set response and allow to unwind
             LOG.info("Received NetOp, replying with {op=200}...");
             response.setStatus(200);
-            DLC.addContent("{op=200}", envelope);
+            envelope.addContent("{op=200}");
         } else {
             // Set up hold to support async back-end
             LOG.info("Received normal request; setting up client hold and forwarding to bus...");
             ClientHold clientHold = new ClientHold(target, baseRequest, request, response, envelope);
             requests.put(envelope.getId(), clientHold);
             service.send(envelope, this);
-
             if (DLC.getErrorMessages(envelope).size() > 0) {
                 // Just 500 for now
                 LOG.warning("Returning HTTP 500...");
@@ -115,9 +114,10 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
     public void reply(Envelope e) {
         ClientHold hold = requests.get(e.getId());
         HttpServletResponse response = hold.getResponse();
-        DID eDID = e.getDID();
-        LOG.info("DID in header: "+eDID);
-        respond(unpackEnvelopeContent(e), "application/json", response, 200);
+//        DID eDID = e.getDID();
+//        LOG.info("DID in header: "+eDID);
+//        respond(unpackEnvelopeContent(e), "application/json", response, 200);
+        respond(e.toJSON(), "application/json", response, 200);
         hold.baseRequest.setHandled(true);
         LOG.info("Waking sleeping request thread to return response to caller...");
         hold.wake(); // Interrupt sleep to allow thread to return
@@ -167,7 +167,7 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
         }
 
         // Get file content if sent
-        if(e.getContentType() != null && e.getContentType().startsWith("multipart/form-data")) {
+        if(request.getContentType() != null && request.getContentType().startsWith("multipart/form-data")) {
         	request.setAttribute(Request.MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(""));
             try {
                 Collection<Part> parts = request.getParts();
@@ -242,27 +242,30 @@ public class EnvelopeJSONDataHandler extends DefaultHandler implements Client, E
                 String[] nvp = nvpStr.split("=");
                 queryMap.put(nvp[0], nvp[1]);
             }
-            DLC.addData(Map.class, queryMap, e);
+            e.addData(Map.class, queryMap);
         }
 
         // Get post parameters if present and place as content
         Map<String, String[]> m = request.getParameterMap();
         if(m != null && !m.isEmpty()) {
-            DLC.addContent(m, e);
+            e.addContent(m);
         }
 
         return e;
     }
 
-    protected String unpackEnvelopeContent(Envelope e) {
-        Object contentObj = DLC.getContent(e);
-        if(contentObj instanceof byte[])
-            return new String((byte[])contentObj);
-        else if(contentObj instanceof Content)
-            return ((Content)DLC.getContent(e)).toJSON();
-        else
-            return "{"+HttpServletResponse.SC_OK+"}";
-    }
+//    protected String unpackEnvelopeContent(Envelope e) {
+//        Object contentObj = DLC.getContent(e);
+//        if(contentObj==null) {
+//            return "";
+//        }
+//        if(contentObj instanceof byte[])
+//            return new String((byte[])contentObj);
+//        else if(contentObj instanceof Content)
+//            return ((Content)DLC.getContent(e)).toJSON();
+//        else
+//            return contentObj.toString();
+//    }
 
     public String getPostRequestFormData(HttpServletRequest request)  {
         StringBuilder formData = new StringBuilder();

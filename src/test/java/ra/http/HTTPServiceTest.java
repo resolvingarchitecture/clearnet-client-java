@@ -61,7 +61,7 @@ public class HTTPServiceTest {
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
         service.sendOut(envelope);
-        String html = new String((byte[]) DLC.getContent(envelope));
+        String html = (String) envelope.getContent();
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }
 
@@ -78,7 +78,7 @@ public class HTTPServiceTest {
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
         service.sendOut(envelope);
-        String html = new String((byte[]) DLC.getContent(envelope));
+        String html = (String) envelope.getContent();
         Assert.assertTrue(html.contains("<title>Resolving Architecture</title>"));
     }
 
@@ -95,7 +95,7 @@ public class HTTPServiceTest {
         envelope.setHeader(Envelope.HEADER_CONTENT_TYPE, "text/html");
         envelope.setAction(Envelope.Action.GET);
         service.sendOut(envelope);
-        String html = new String((byte[]) DLC.getContent(envelope));
+        String html = (String) envelope.getContent();
         Assert.assertEquals("<html><body>HTTPServiceTest Available</body></html>", html);
     }
 

@@ -327,12 +327,7 @@ public class HTTPService extends NetworkService {
         ResponseBody responseBody = response.body();
         if(responseBody != null) {
             try {
-                String bodyStr = new String(responseBody.bytes());
-                if("application/json".equals(response.header(Envelope.HEADER_CONTENT_TYPE))) {
-                    e.fromJSON(bodyStr);
-                } else {
-                    e.addContent(bodyStr);
-                }
+                e.addContent(new String(responseBody.bytes()));
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
             } finally {

@@ -327,7 +327,7 @@ public class HTTPService extends NetworkService {
         ResponseBody responseBody = response.body();
         if(responseBody != null) {
             try {
-                e.addContent(new String(responseBody.bytes()));
+                e.addContent(responseBody.bytes());
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
             } finally {

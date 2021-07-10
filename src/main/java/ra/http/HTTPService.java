@@ -280,25 +280,19 @@ public class HTTPService extends NetworkService {
                 response = httpsStrongClient.newCall(req).execute();
                 if(!response.isSuccessful()) {
                     end = new Date().getTime();
-                    LOG.warning(response.toString()+" - code="+response.code());
+                    LOG.warning(response+" - code="+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(start, end, m, url.toString());
-                    send(e);
-                    return false;
                 }
             } catch (IOException e1) {
                 LOG.warning(e1.getLocalizedMessage());
                 m.addErrorMessage(e1.getLocalizedMessage());
-                send(e);
-                return false;
             }
         } else {
             LOG.info("Sending http request, host="+url.getHost());
             if(httpClient == null) {
                 LOG.severe("httpClient was not set up.");
                 m.addErrorMessage("httpClient was not set up.");
-                send(e);
-                return false;
             }
             try {
                 start = new Date().getTime();
@@ -308,14 +302,10 @@ public class HTTPService extends NetworkService {
                     LOG.warning("HTTP request not successful: "+response.code());
                     m.addErrorMessage(response.code()+"");
                     handleFailure(start, end, m, url.toString());
-                    send(e);
-                    return false;
                 }
             } catch (IOException e2) {
                 LOG.warning(e2.getLocalizedMessage());
                 m.addErrorMessage(e2.getLocalizedMessage());
-                send(e);
-                return false;
             }
         }
 
